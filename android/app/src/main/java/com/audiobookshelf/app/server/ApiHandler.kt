@@ -213,17 +213,31 @@ class ApiHandler(var ctx:Context) {
       client.newCall(refreshRequest).enqueue(object : Callback {
         override fun onFailure(call: Call, e: IOException) {
           Log.e(tag, "handleTokenRefresh: Failed to connect to refresh endpoint", e)
-          AbsLogger.error(tag, "handleTokenRefresh: Failed to connect to refresh endpoint for server ${DeviceManager.serverConnectionConfigString} (error: ${e.message})")
-          handleRefreshFailure(callback)
+          AbsLogger.error(tag, "handleTokenRefresh: Failed to connect to refresh endpoint for server ${DeviceManager.serverConnectionConfigString} (transient: ${e.message})")
+          // Network error is transient — keep credentials, return error to caller
+          val errorObj = JSObject()
+          errorObj.put("error", "Server temporarily unavailable (network error)")
+          errorObj.put("transient", true)
+          callback(errorObj)
         }
 
         override fun onResponse(call: Call, response: Response) {
           response.use {
-            if (!it.isSuccessful) {
-              AbsLogger.error(tag, "handleTokenRefresh: Refresh request failed with status ${it.code} for server ${DeviceManager.serverConnectionConfigString}")
+            if (it.code == 401) {
+              // Refresh token is genuinely invalid — log out
+              AbsLogger.error(tag, "handleTokenRefresh: Refresh request rejected (401) for server ${DeviceManager.serverConnectionConfigString}")
               handleRefreshFailure(callback)
               return
             }
+
+            // Any other non-2xx (403/404/5xx) is transient — server may be rebooting
+            AbsLogger.error(tag, "handleTokenRefresh: Refresh request failed with status ${it.code} for server ${DeviceManager.serverConnectionConfigString} (transient, keeping credentials)")
+            val errorObj = JSObject()
+            errorObj.put("error", "Server temporarily unavailable (status ${it.code})")
+            errorObj.put("transient", true)
+            callback(errorObj)
+            return
+          }
 
             val bodyString = it.body!!.string()
             try {

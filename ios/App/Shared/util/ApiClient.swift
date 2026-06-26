@@ -205,8 +205,15 @@ class ApiClient {
                 retryOriginalRequest(endpoint: endpoint, method: method, parameters: parameters, decodable: decodable, newAccessToken: user.accessToken, callback: callback)
                 
             case .failure(let error):
-                AbsLogger.error(message: "handleTokenRefresh: Refresh request failed for server \(serverConfig.name): \(error)")
-                handleRefreshFailure()
+                let statusCode = response.response?.statusCode ?? -1
+                if statusCode == 401 {
+                    // Token was explicitly rejected — log out
+                    AbsLogger.error(message: "handleTokenRefresh: Refresh request rejected (401) for server \(serverConfig.name)")
+                    handleRefreshFailure()
+                } else {
+                    // Transient error (403, 404, 5xx) — server may be rebooting. Keep credentials for retry.
+                    AbsLogger.error(message: "handleTokenRefresh: Refresh request failed with status \(statusCode) for server \(serverConfig.name) (transient, keeping credentials)")
+                }
                 callback?(nil)
             }
         }

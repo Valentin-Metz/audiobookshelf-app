@@ -70,7 +70,13 @@ export default function ({ $axios, store, $db }) {
     if (code === 401 && !originalRequest._retry) {
       // Skip refresh for auth endpoints to prevent infinite loops
       if (originalRequest.url.endsWith('/auth/refresh') || originalRequest.url.endsWith('/login')) {
-        await handleRefreshFailure(store.getters['user/getServerConnectionConfigId'])
+        // Only log out on genuine rejection (401). 403/404/5xx are transient.
+        const responseStatus = error.response?.status
+        if (responseStatus === 401) {
+          await handleRefreshFailure(store.getters['user/getServerConnectionConfigId'])
+        } else {
+          console.error('[axios] Auth endpoint returned', responseStatus, '(transient, keeping credentials)')
+        }
         return Promise.reject(error)
       }
 
@@ -120,7 +126,13 @@ export default function ({ $axios, store, $db }) {
         // Process queued requests with error
         processQueue(refreshError, null)
 
-        await handleRefreshFailure(store.getters['user/getServerConnectionConfigId'])
+        // Only log out on genuine token rejection (401). Keep credentials on transient errors (404/403/5xx/network).
+        const isPermanent = refreshError ? refreshError.response?.status === 401 || refreshError._permanentFailure === true : false
+        if (isPermanent) {
+          await handleRefreshFailure(store.getters['user/getServerConnectionConfigId'])
+        } else {
+          console.error('[axios] Token refresh failed (transient): keeping credentials')
+        }
 
         return Promise.reject(refreshError)
       } finally {
